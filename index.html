@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>1-Min Prediction Tool</title>
+  <style>
+    body {
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    .box {
+      max-width: 500px;
+      margin: auto;
+      background: #111;
+      border-radius: 15px;
+      padding: 20px;
+      box-shadow: 0 0 10px #222;
+    }
+    h2 { text-align: center; margin-bottom: 10px; }
+    .label { font-weight: bold; margin-top: 10px; }
+    .result { font-size: 22px; margin: 10px 0; text-align: center; }
+    .stat { display: flex; justify-content: space-between; margin: 8px 0; }
+    .history-card {
+      background: #222;
+      margin: 5px 0;
+      padding: 10px;
+      border-left: 5px solid;
+    }
+    .WIN { border-color: #00ff99; }
+    .LOSS { border-color: #ff3b3b; }
+    .PENDING { border-color: #ffe600; }
+  </style>
+</head>
+<body>
+<div class="box">
+  <h2>1-Min Prediction Tool</h2>
+  <div class="label">Period:</div>
+  <div class="result" id="periodDisplay">-</div>
+
+  <div class="label">Prediction:</div>
+  <div class="result" id="predictionDisplay">-</div>
+
+  <div class="stat"><span>Wins:</span><span id="wins">0</span></div>
+  <div class="stat"><span>Losses:</span><span id="losses">0</span></div>
+  <div class="stat"><span>Accuracy:</span><span id="accuracy">0%</span></div>
+
+  <div class="label">History:</div>
+  <div id="historyContainer"></div>
+</div>
+
+<script>
+let patternIndex = 0;
+let wins = 0;
+let losses = 0;
+let lastPeriod = null;
+const historyData = [];
+
+function generatePeriod() {
+  let now = new Date();
+  return now.getFullYear() * 100000 + 10001 + now.getUTCHours() * 60 + now.getUTCMinutes();
+}
+
+const predictionPatterns = [
+  {
+    name: "Last Digit Even/Odd",
+    logic: (p) => (p % 10) % 2 === 0 ? "BIGG" : "SMLL"
+  },
+  {
+    name: "Digit Sum Even/Odd",
+    logic: (p) => (String(p).split('').reduce((a, b) => a + +b, 0)) % 2 === 0 ? "BIGG" : "SMLL"
+  },
+  {
+    name: "Flip Last Digit",
+    logic: (p) => (p % 10) % 2 === 0 ? "SMLL" : "BIGG"
+  },
+  {
+    name: "Modulo 7",
+    logic: (p) => p % 7 < 4 ? "BIGG" : "SMLL"
+  },
+  {
+    name: "Second Last Digit ≥ 5",
+    logic: (p) => parseInt(String(p).slice(-2, -1)) >= 5 ? "BIGG" : "SMLL"
+  },
+  {
+    name: "Middle Digit Even/Odd",
+    logic: (p) => parseInt(String(p).slice(-3, -2)) % 2 === 0 ? "SMLL" : "BIGG"
+  },
+  {
+    name: "Double Digit Mod 5",
+    logic: (p) => parseInt(String(p).slice(-2)) % 5 < 3 ? "BIGG" : "SMLL"
+  },
+  {
+    name: "Cross Sum Parity",
+    logic: (p) => {
+      const digits = String(p).split('').map(Number);
+      const cross = digits[0] + digits[digits.length - 1];
+      return cross % 2 === 0 ? "SMLL" : "BIGG";
+    }
+  }
+];
+
+function getPrediction(period) {
+  const pattern = predictionPatterns[patternIndex];
+  const prediction = pattern.logic(period);
+  return { prediction, patternName: pattern.name };
+}
+
+async function fetchResultFromAPI() {
+  try {
+    const res = await fetch("https://api.bdg88zf.com/api/webapi/GetNoaverageEmerdList", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pageSize: 10, pageNo: 1, typeId: 1, language: 0,
+        random: "4a0522c6ecd8410496260e686be2a57c",
+        signature: "334B5E70A0C9B8918B0B15E517E2069C",
+        timestamp: Math.floor(Date.now() / 1000)
+      })
+    });
+    const json = await res.json();
+    return json?.data?.list?.[0] || null;
+  } catch (e) {
+    console.error("API Error:", e);
+    return null;
+  }
+}
+
+function updateHistoryDisplay() {
+  const container = document.getElementById("historyContainer");
+  container.innerHTML = "";
+  historyData.forEach(h => {
+    const card = document.createElement("div");
+    card.className = `history-card ${h.status}`;
+    card.innerHTML = `<b>P:</b> ${h.period} | <b>Pred:</b> ${h.prediction} | <b>Result:</b> ${h.result}`;
+    container.appendChild(card);
+  });
+}
+
+function updateStats() {
+  const total = wins + losses;
+  const accuracy = total > 0 ? ((wins / total) * 100).toFixed(1) : 0;
+  document.getElementById("wins").innerText = wins;
+  document.getElementById("losses").innerText = losses;
+  document.getElementById("accuracy").innerText = `${accuracy}%`;
+}
+
+// Rotate pattern only on WIN
+function rotatePatternIfWin(success) {
+  if (success) {
+    patternIndex = (patternIndex + 1) % predictionPatterns.length;
+  }
+}
+
+async function mainLoop() {
+  const actualResult = await fetchResultFromAPI();
+  if (!actualResult || actualResult.issueNumber === lastPeriod) return;
+
+  const actualNum = parseInt(actualResult.number);
+  const actualResultType = actualNum < 5 ? "SMLL" : "BIGG";
+  const currentPeriod = generatePeriod();
+  lastPeriod = actualResult.issueNumber;
+
+  // Resolve PENDING result
+  if (historyData[0] && historyData[0].status === "PENDING") {
+    const correct = historyData[0].prediction === actualResultType;
+    historyData[0].result = actualNum;
+    historyData[0].status = correct ? "WIN" : "LOSS";
+
+    if (correct) {
+      wins++;
+      rotatePatternIfWin(true);
+    } else {
+      losses++;
+    }
+    updateStats();
+    updateHistoryDisplay();
+  }
+
+  const { prediction } = getPrediction(currentPeriod);
+  document.getElementById("periodDisplay").innerText = currentPeriod;
+  document.getElementById("predictionDisplay").innerText = prediction;
+
+  historyData.unshift({
+    period: currentPeriod,
+    prediction,
+    result: "-",
+    status: "PENDING"
+  });
+}
+
+setInterval(mainLoop, 5000);
+</script>
+</body>
+</html>
